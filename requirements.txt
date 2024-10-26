@@ -1,0 +1,13 @@
+einops-0.8.0
+torch_geometric
+torch-cluster
+torch_scatter
+zenodo_get
+awkward
+vector
+torch_sparse
+hdf5plugin
+h5py
+pandas
+wandb
+scipy
