@@ -7,8 +7,7 @@ import torchmetrics
 from lightning.pytorch.loggers import WandbLogger
 from torch_ema import ExponentialMovingAverage
 from torch_geometric.loader.dataloader import DataLoader
-from configs.toptag_config import Config
-from data.TopQuarkDataset import JetTopTagDataset
+import data as dataset
 from graph_mixer import GraphMLPMixer
 from graph_mixer.data_processing import *
 from graph_mixer.loss import FocalLoss
@@ -17,8 +16,9 @@ from utils import set_seed
 from utils import weight_init
 from adam_atan2_pytorch import AdamAtan2
 from adabelief_pytorch import AdaBelief
-# from lion_pytorch import Lion
-alpha = 1e-6
+from lion_pytorch import Lion
+from data import TopQuarkDataset, JetClassDataset, QGDataset, JetNetDataset, WTagDataset, JetTauIdDataset
+from dataclasses import dataclass, asdict
 
 def get_the_arguments():
 
@@ -31,34 +31,26 @@ def get_the_arguments():
     args = parser.parse_args()
     config_path = args.config
     config = importlib.util.spec_from_file_location("Config", config_path)
+    #TODO realize this classes and inport from path:
+    from configs.toptag_config import Config, MixerConfig
     config = Config()
-    
+    mixer_config = MixerConfig()
+    return config, mixer_config   
+
 
 
 class gMLPMixer(pl.LightningModule):
-    def __init__(self):
+    def __init__(self, mixer_config, training_config):
         super().__init__()
-        self.model = GraphMLPMixer(
-            nfeat_node=8,
-            nfeat_jet=6,
-            rw_dim=0,
-            lap_dim=0,
-            dropout=0.0,
-            gMHA_type="MLPMixer",
-            mlpmixer_dropout=0.0,
-            patch_rw_dim=0,
-            nfeat_edge=1,
-            nhid=32,
-            nlayer_gnn=0,
-            n_patches=8,
-            nout=2,
-            nlayer_mlpmixer=8,
-            token_dim=[512, 512, 64, 64, 64, 64, 32, 32],
-            channel_dim=[512, 512, 64, 64, 64, 64, 32, 32],
-        )
+        self.config = training_config
+        
+        self.model = GraphMLPMixer(**{k: v for k, v in asdict(mixer_config).items()})
+        
         self.save_hyperparameters()
+        
         self.model.apply(weight_init)
-        self.loss_fn = FocalLoss(gamma=0.0)
+        
+        self.loss_fn = FocalLoss(gamma=5.0)
         self.train_acc = torchmetrics.classification.BinaryAccuracy()
         self.valid_acc = torchmetrics.classification.BinaryAccuracy()
         self.train_auc = torchmetrics.classification.BinaryAUROC()
@@ -81,6 +73,7 @@ class gMLPMixer(pl.LightningModule):
             _type_: _description_
         """
         x = self.model(x)
+        pdb.set_trace()
         return x
 
     def training_step(self, batch, batch_idx) -> torch.Tensor:
@@ -99,8 +92,7 @@ class gMLPMixer(pl.LightningModule):
         except Exception:
             pdb.set_trace()
         logits = torch.nan_to_num(logits, 1e-16)
-        class_weights = [0.5, 0.5]
-        # batch.label.size(0)/(torch.histc(batch.label,  bins=2)*2)
+        class_weights = [0.5, 0.5] # batch.label.size(0)/(torch.histc(batch.label,  bins=2)*2)
         noise_std = 0.001
         output = torch.nn.functional.softmax(logits, dim=1)
         l1_norm = 0
@@ -109,11 +101,11 @@ class gMLPMixer(pl.LightningModule):
         _len = len(list(self.model.parameters()))
         for param in self.model.parameters():
             i += 1
-            l1_norm += alpha * (_len - i) * torch.norm(torch.abs(param), 1)
-            l2_norm += alpha * (_len - i) * torch.norm(torch.abs(param**2), 1)
+            l1_norm += self.config.alpha  * (_len - i) * torch.norm(torch.abs(param), 1)
+            l2_norm += self.config.alpha   * (_len - i) * torch.norm(torch.abs(param**2), 1)
         loss = self.loss_fn(
             logits, y.long(), weight=torch.Tensor(class_weights)
-        ) + alpha * (l1_norm + l2_norm)
+        ) + self.config.alpha* (l1_norm + l2_norm)
         loss += torch.rand_like(loss) * noise_std
         if torch.isnan(loss.mean()):
             pdb.set_trace()
@@ -147,32 +139,8 @@ class gMLPMixer(pl.LightningModule):
         return loss
 
     def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure):
-        if batch_idx == 0 and epoch % 50 == 0:
-            optimizer._optimizer.param_groups[-1]["lr"] = (
-                optimizer._optimizer.param_groups[-1]["lr"] * 0.5
-            )
-        with torch.no_grad():
-            for p in range(0, len(optimizer.param_groups[0]["params"])):
-                if optimizer.param_groups[0]["params"][p].grad is not None:
-                    size = optimizer.param_groups[0]["params"][p].size()
-                    optimizer.param_groups[0]["params"][p].grad += 1e-3 * torch.normal(
-                        mean=0.0, std=1.0, size=size, requires_grad=True
-                    )
-                else:
-                    size = optimizer.param_groups[0]["params"][p].size()
-                    #
-                    optimizer.param_groups[0]["params"][p].grad = torch.rand_like(
-                        optimizer.param_groups[0]["params"][p], requires_grad=True
-                    )
-                    # 1e-3*torch.normal(mean=0.0,
-                    #                  std=1.0,
-                    #                  size=size,
-                    #                  requires_grad=True)
-        try:
-            optimizer.step(closure=optimizer_closure)
-        except Exception as E:
-            print(f"Exception: {E}")
-        # self.ema.update(self.model.parameters())
+        optimizer = optimizer.optimizer
+        optimizer.step(closure=optimizer_closure)
 
     def configure_optimizers(self):
         """_summary_
@@ -180,26 +148,32 @@ class gMLPMixer(pl.LightningModule):
         Returns:
             _type_: _description_
         """
-        # optimizer = Lion(self.model.parameters(), lr=4e-4, weight_decay=1e-2)
-        # optimizer =  AdamAtan2( self.model.parameters(), lr=1e-6, weight_decay=1e-2)
-        optimizer = AdaBelief(
-            self.model.parameters(),
-            lr=1e-6,
-            eps=1e-16,
-            betas=(0.9, 0.999),
-            weight_decouple=True,
-            rectify=False,
-        )
-        # optimizer = Muon(self.model.parameters(),  lr=1e-7, weight_decay=1e-5)
+        if self.config.optimizer == "lion":
+            optimizer = Lion(self.model.parameters(), lr=4e-4, weight_decay=1e-2)
+        elif self.config.optimizer == "adam":
+            optimizer =  AdamAtan2( self.model.parameters(), lr=1e-6, weight_decay=1e-2)
+        elif self.config.optimizer == "adamw":
+            optimizer = torch.optim.AdamW(self.model.parameters(), lr=1e-3, weight_decay=1e-5)
+        elif self.config.optimizer == "adabelief":
+            optimizer = AdaBelief(self.model.parameters(),lr=1e-6, eps=1e-16, betas=(0.9, 0.999), 
+                                  weight_decouple=True,rectify=False)
         scheduler = {
             "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, patience=1000, factor=0.5, min_lr=1e-6
+                optimizer,
+                mode="min",
+                factor=0.9,
+                patience=100,
+                threshold=0.000001,
+                threshold_mode="rel",
+                cooldown=0,
+                min_lr=1e-8,
+                eps=1e-08,
             ),
             "monitor": "train/loss",
             "interval": "step",
             "frequency": 1,
         }
-        return {"optimizer": optimizer}  # "lr_scheduler": scheduler}
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
 
 def train(graph_mixer, train_dl, test_dl):
@@ -214,29 +188,39 @@ def train(graph_mixer, train_dl, test_dl):
         deterministic=True,
         enable_checkpointing=True,
         gradient_clip_val=1.0,
+        accumulate_grad_batches=1,
         gradient_clip_algorithm="norm",
         logger=wandb_logger,
         accelerator="cpu",
         detect_anomaly=True,
         check_val_every_n_epoch=2,
     )
-    trainer.fit(
-        graph_mixer,
-        train_dl,
-        test_dl,
-        ckpt_path="./TopQuark_Muon/wxfxlwy8/checkpoints/epoch=33-step=5338.ckpt",
-    )
+    trainer.fit(graph_mixer, train_dl, test_dl)
     return trainer
 
-
-if __name__ == "__main__":
-    g = set_seed(0)
-    train_ds = JetTopTagDataset(input_path=config.path)
-    test_ds = JetTopTagDataset(input_path=config.path, mode="test")
-    train_dl = DataLoader(
-        train_ds,
-        batch_size=config.batch_size,
-        shuffle=False,
+def load_dataset(config):
+    #TopQuarkDataset.py
+    if config.dataset == "top_quark":
+        train_ds = TopQuarkDataset.JetTopTagDataset(input_path=config.path)
+        test_ds = TopQuarkDataset.JetTopTagDataset(input_path=config.path, mode="test")
+    elif config.dataset == "quark_gluon":
+        train_ds = QGDataset.JetQGDataset(input_path=config.path)
+        test_ds = QGDataset.JetQGDataset(input_path=config.path, mode="test")
+    elif config.dataset == "w_boson":
+        train_ds = WTagDataset.WTagDataset(input_path=config.path)
+        test_ds =  WTagDataset.WTagDataset(input_path=config.path, mode="test")
+    elif config.dataset == "jetnet":
+        train_ds = JetNetDataset.JetNetDataset(input_path=config.path)
+        test_ds = JetNetDataset.JetNetDataset(input_path=config.path, mode="test")
+    elif config.dataset == "jetclass":
+        train_ds = JetClassDataset.JetClassDataset(input_path=config.path)
+        test_ds = JetClassDataset.JetClassDataset(input_path=config.path, mode="test")
+    elif config.dataset == "tau_id":
+        train_ds = JetTauIdDataset.JetTauIdDataset(input_path=config.path)
+        test_ds = JetTauIdDataset.JetTauIdDataset(input_path=config.path, mode="test")
+        
+    train_dl = DataLoader(train_ds, batch_size=config.batch_size,
+        shuffle=True,
         pin_memory=True,
         generator=g,
         worker_init_fn=seed_worker,
@@ -249,5 +233,12 @@ if __name__ == "__main__":
         generator=g,
         worker_init_fn=seed_worker,
     )
-    graph_mixer = gMLPMixer()
+    return train_dl, test_dl
+    
+
+if __name__ == "__main__":
+    g = set_seed(0)
+    config, mixer_config = get_the_arguments()
+    train_dl, test_dl = load_dataset(config=config) 
+    graph_mixer = gMLPMixer(mixer_config, config)
     trainer = train(graph_mixer, train_dl, test_dl)

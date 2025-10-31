@@ -14,6 +14,7 @@ from graph_mixer.data_processing import GraphPartitionTransform
 
 
 coordinates = ["part_deta", "part_dphi"]
+
 cat_variables = [
     "part_isChargedHadron",
     "part_isNeutralHadron",

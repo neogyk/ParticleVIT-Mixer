@@ -8,12 +8,9 @@ import torch
 import torch_geometric
 from torch_geometric.data import Data
 from torch_geometric.loader.dataloader import DataLoader
-# from torch_geometric.transforms.normalize_rotation import NormalizeRotation
-from torch_geometric.transforms import NormalizeFeatures
 import random
 from graph_mixer import PositionalEncodingTransform
 from graph_mixer.data_processing import GraphPartitionTransform, RicciFlowPartition
-from torch_geometric.nn import radius_graph
 
 
 class JetNetDataset(torch.utils.data.Dataset):
@@ -83,7 +80,7 @@ class JetNetDataset(torch.utils.data.Dataset):
         Returns:
             _type_: _description_
         """
-        return 10000  # self.particle_features.shape[0]
+        return self.particle_features.shape[0]
 
     def __getitem__(self, idx: int):  # ->tuple(torch.Tensor, torch.Tensor):
         """_summary_
