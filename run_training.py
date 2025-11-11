@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse
+import argparse, sys 
 import importlib
 import torch
 import torchmetrics
@@ -7,14 +7,13 @@ from graph_mixer import GraphMLPMixer
 from graph_mixer.data_processing import *
 from graph_mixer.loss import FocalLoss
 from utils import seed_worker, set_seed, weight_init
-
 from adam_atan2_pytorch import AdamAtan2
 from adabelief_pytorch import AdaBelief
 from lion_pytorch import Lion
 import pytorch_lightning as pl
 from lightning.pytorch.loggers import WandbLogger
 from torch_geometric.loader.dataloader import DataLoader
-
+from dataclasses import asdict
 from data import (
     TopQuarkDataset,
     JetClassDataset,
@@ -22,11 +21,9 @@ from data import (
     JetNetDataset,
     WTagDataset,
 )
-from dataclasses import asdict
 
 
 def get_the_arguments():
-
     parser = argparse.ArgumentParser(
         prog="Graph MLP Mixer for Jet Tagging",
         description="The script allows to train and infer the model using the input config file",
@@ -35,30 +32,28 @@ def get_the_arguments():
     parser.add_argument("config")
     args = parser.parse_args()
     config_path = args.config
-    config = importlib.util.spec_from_file_location("Config", config_path)
-    # TODO realize this classes and inport from path:
-    from configs.toptag_config import Config, MixerConfig
-    config = Config()
-    mixer_config = MixerConfig()
-    return config, mixer_config
+    
+    config_spec = importlib.util.spec_from_file_location("Config", config_path)
+    config = importlib.util.module_from_spec(config_spec)
+    sys.modules["Config"] = config
+    config_spec.loader.exec_module(config)
+    #Return 3 config one is about to the data, second for Neural Network parameter and third for Training Process
+    return config.Config(), config.MixerConfig(), config.TrainingConfig()
 
 
 class gMLPMixer(pl.LightningModule):
     def __init__(self, mixer_config, training_config):
         super().__init__()
         self.config = training_config
-
         self.model = GraphMLPMixer(**{k: v for k, v in asdict(mixer_config).items()})
-
         self.save_hyperparameters()
-
         self.model.apply(weight_init)
-
-        self.loss_fn = FocalLoss(gamma=5.0)
+        self.loss_fn = FocalLoss(gamma=0.0)
         self.train_acc = torchmetrics.classification.BinaryAccuracy()
         self.valid_acc = torchmetrics.classification.BinaryAccuracy()
         self.train_auc = torchmetrics.classification.BinaryAUROC()
         self.valid_auc = torchmetrics.classification.BinaryAUROC()
+        print(self.model)
         # self.ema = ExponentialMovingAverage(self.model.parameters(), decay=0.995)
         self.confmat = torchmetrics.ConfusionMatrix(
             normalize="true", task="binary", num_classes=2
@@ -90,15 +85,10 @@ class gMLPMixer(pl.LightningModule):
             _type_: _description_
         """
         x, y = batch, batch.label
-        try:
-            logits = self.model(x)
-        except Exception:
-            pdb.set_trace()
+        logits = self.model(x)
         logits = torch.nan_to_num(logits, 1e-16)
-        class_weights = [
-            0.5,
-            0.5,
-        ]  # batch.label.size(0)/(torch.histc(batch.label,  bins=2)*2)
+        class_weights = [1.0,1.0,]  
+        # batch.label.size(0)/(torch.histc(batch.label,  bins=2)*2)
         noise_std = 0.001
         output = torch.nn.functional.softmax(logits, dim=1)
         l1_norm = 0
@@ -127,7 +117,7 @@ class gMLPMixer(pl.LightningModule):
         fig_, ax_ = self.confmat.plot()
         self.log("train/auc", auc, prog_bar=True)
         self.log("lr", self.optimizers()._optimizer.param_groups[-1]["lr"])
-        self.logger.log_image("Validation Confusion Matrix", [fig_])
+        self.logger.log_image("Train Confusion Matrix", [fig_])
         return loss
 
     def validation_step(self, batch, batch_idx) -> torch.Tensor:
@@ -192,18 +182,16 @@ class gMLPMixer(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
 
-def train(graph_mixer, train_dl, test_dl):
-    wandb_logger = WandbLogger(project="TopQuark_Muon")
-    # code_artifact = wandb.Artifact(name="executable",type="code")
-    # wandb_logger.use_artifact("./run_topquark.py", artifact_type="code")
+def train(config, graph_mixer, train_dl, test_dl):
+    wandb_logger = WandbLogger(project=config.dataset)
     wandb_logger.watch(graph_mixer, log="all")  ##log_graph=True)
     trainer = pl.Trainer(
-        default_root_dir="./TopQuark_Muon/",
+        default_root_dir=config.root_dir,
         max_epochs=200,
         precision="32",
         deterministic=True,
         enable_checkpointing=True,
-        gradient_clip_val=1.0,
+        gradient_clip_val=0.5,
         accumulate_grad_batches=1,
         gradient_clip_algorithm="norm",
         logger=wandb_logger,
@@ -217,21 +205,21 @@ def train(graph_mixer, train_dl, test_dl):
 
 def load_dataset(config):
     if config.dataset == "top_quark":
-        train_ds = TopQuarkDataset.JetTopTagDataset(input_path=config.path)
-        test_ds = TopQuarkDataset.JetTopTagDataset(input_path=config.path, mode="test")
+        train_ds = TopQuarkDataset.JetTopTagDataset(config=config)
+        test_ds = TopQuarkDataset.JetTopTagDataset(config=config, mode="test")
     elif config.dataset == "quark_gluon":
-        train_ds = QGDataset.JetQGDataset(input_path=config.path)
-        test_ds = QGDataset.JetQGDataset(input_path=config.path, mode="test")
+        train_ds = QGDataset.JetQGDataset(config=config)
+        test_ds = QGDataset.JetQGDataset(config=config, mode="test")
     elif config.dataset == "w_boson":
-        train_ds = WTagDataset.WTagDataset(input_path=config.path)
-        test_ds = WTagDataset.WTagDataset(input_path=config.path, mode="test")
+        train_ds = WTagDataset.WTagDataset(config=config)
+        test_ds = WTagDataset.WTagDataset(config=config, mode="test")
     elif config.dataset == "jetnet":
-        train_ds = JetNetDataset.JetNetDataset(input_path=config.path)
-        test_ds = JetNetDataset.JetNetDataset(input_path=config.path, mode="test")
+        train_ds = JetNetDataset.JetNetDataset(config=config)
+        test_ds = JetNetDataset.JetNetDataset(config=config, mode="test")
     elif config.dataset == "jetclass":
-        train_ds = JetClassDataset.JetClassDataset(input_path=config.path)
-        test_ds = JetClassDataset.JetClassDataset(input_path=config.path, mode="test")
-    
+        train_ds = JetClassDataset.JetClassDataset(config=config)
+        test_ds = JetClassDataset.JetClassDataset(config=config, mode="test")
+
     train_dl = DataLoader(
         train_ds,
         batch_size=config.batch_size,
@@ -250,9 +238,10 @@ def load_dataset(config):
     )
     return train_dl, test_dl
 
+
 if __name__ == "__main__":
-    g = set_seed(0)
-    config, mixer_config = get_the_arguments()
+    g = set_seed(42)
+    config, mixer_config, train_config = get_the_arguments()
     train_dl, test_dl = load_dataset(config=config)
     graph_mixer = gMLPMixer(mixer_config, config)
-    trainer = train(graph_mixer, train_dl, test_dl)
+    trainer = train(config, graph_mixer, train_dl, test_dl)
