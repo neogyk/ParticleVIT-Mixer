@@ -76,9 +76,8 @@ class JetClassDataset(torch.utils.data.Dataset):
 
     def __init__(
         self,
-        input_path: str,
-        train: bool,
         config,
+        train: bool,
     ) -> torch.utils.data.Dataset:
         """_summary_
 
@@ -86,10 +85,10 @@ class JetClassDataset(torch.utils.data.Dataset):
             input_path (str): _description_
             train (bool, optional): _description_. Defaults to False.
         """
-        self.input_path = input_path
-        self.data = uproot.open(input_path)["tree;5"]
+        self.input_path = config.input_path
+        self.data = uproot.open(self.input_path)["tree;5"]
         self.variables = self.data.arrays(
-            variables,
+            config.variables,
             library="np",
         )  # variables
         self.coordinates = self.data.arrays(coordinates, library="np")

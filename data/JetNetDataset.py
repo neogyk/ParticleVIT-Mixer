@@ -1,6 +1,7 @@
 # import pdb
 from __future__ import annotations
 import gc
+import pdb
 from glob import glob
 import h5py
 import numpy as np
@@ -16,7 +17,7 @@ from graph_mixer.data_processing import GraphPartitionTransform, RicciFlowPartit
 class JetNetDataset(torch.utils.data.Dataset):
 
     def __init__(
-        self, input_path: str, train: bool = False
+        self, config, mode="train",
     ) -> torch.utils.data.Dataset:
         """JetNet Dataset downloaded from:
 
@@ -27,8 +28,9 @@ class JetNetDataset(torch.utils.data.Dataset):
         #Features:
 
         """
-        self.input_path = input_path
-        print(self.input_path)
+        self.input_path = config.path
+        self.config = config
+        print("Input Path:", config.path)
 
         labels = []
         jet_features = []  # [pt, theta, mass, number of particles]
@@ -131,10 +133,8 @@ class JetNetDataset(torch.utils.data.Dataset):
             event.x[:, 2][edge_index[0]] + event.x[:, 2][edge_index[1]]
         )
         event.edge_attr = torch.stack([dR, k_T, z]).T
-        pre_transform = PositionalEncodingTransform(rw_dim=4, lap_dim=6)
-        gpatrches = GraphPartitionTransform(n_patches=4, metis=False, patch_rw_dim=4)
-        # ricchie_patcher = RicciFlowPartition()
-        # event = ricchie_patcher(event.edge_index,event.batch, event.x)
+        pre_transform = PositionalEncodingTransform(rw_dim=self.config.rw_dim, lap_dim=self.config.lap_dim)
+        gpatrches = GraphPartitionTransform(n_patches=self.config.n_patches, metis=False, patch_rw_dim=self.config.patch_rw_dim)
         event = gpatrches(event)
         event = pre_transform(event)
         return event
