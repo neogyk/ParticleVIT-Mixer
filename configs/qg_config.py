@@ -16,19 +16,20 @@ class Config:
     lap_dim:int=4
     n_patches:int = 16
     train_files = [
-        'QG_jets_1.npz',
         'QG_jets_10.npz',
-        'QG_jets_11.npz',
+        'QG_jets_14.npz',
+        'QG_jets_16.npz',
         'QG_jets_12.npz',
         'QG_jets_13.npz'
     ]
 
     test_files = ['QG_jets.npz']
-    lr:float = 1e-4
+    lr:float = 1e-3
     alpha:float = 1e-6
     regularization:float = 1e-6
-    batch_size:int = 256
+    batch_size:int = 512
     optimizer = "adamw"
+    scheduler = "cosine_warmup_annealing"
     
 @dataclass
 class MixerConfig:
@@ -46,16 +47,16 @@ class MixerConfig:
     nout:int=2
     rw_dim:int=4
     lap_dim:int=4
-    nlayer_mlpmixer:int=8
-    token_dim:list[int]=field(default_factory=lambda: [512, 512, 256, 64, 64, 64, 64, 64])
-    channel_dim:list[int]=field(default_factory=lambda: [512, 512, 256, 256, 128, 64, 64, 64])
+    nlayer_mlpmixer:int=4
+    token_dim:list[int]=field(default_factory=lambda: [128, 128, 128, 128])
+    channel_dim:list[int]=field(default_factory=lambda: [128, 128, 128, 128])
     
 @dataclass
 class TrainingConfig:
-    loss:str
-    gamma:int
-    max_epoch:200
-    seed:0
+    loss:str="focal_loss"
+    gamma:int=0
+    max_epoch:int=200
+    seed:int=42
     
 
     
