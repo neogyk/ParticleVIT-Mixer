@@ -15,7 +15,6 @@ class Config:
     moe:bool = True  # False
     rw_dim:int=4
     lap_dim:int=4
-    patch_rw_dim:int=4
     n_patches:int = 16
     lr:float = 1e-4
     alpha:float = 1e-6
@@ -30,22 +29,20 @@ class Config:
     save_model = True
     seed = 3407
     loss_weight = 'mean'
-    scheduler = "ReduceOnPlateau"
+
     
 @dataclass
 class MixerConfig:
     
-    nfeat_node:int=8
-    nfeat_edge:int=3
+    nfeat_node:int=21
+    nfeat_edge:int=4
     dropout:float=0.0
     mlpmixer_dropout:float=0.0
-    rw_dim:int=4
-    lap_dim:int=4
-    patch_rw_dim:int=4
+    patch_rw_dim:int=0
     nhid:int=64
     nlayer_gnn:int=0
     n_patches:int=16
-    nout:int=5
+    nout:int=2
     rw_dim:int=4
     lap_dim:int=4
     nlayer_mlpmixer:int=8
@@ -54,10 +51,10 @@ class MixerConfig:
     
 @dataclass
 class TrainingConfig:
-    loss:str="focal_loss"
-    gamma:int=0
-    max_epoch:int=200
-    seed:int=3407
+    loss:str
+    gamma:int
+    max_epoch:200
+    seed:0
     
 
     

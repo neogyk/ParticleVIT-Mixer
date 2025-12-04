@@ -14,6 +14,7 @@ from torch_geometric.data import Data
 from torch_geometric.loader.dataloader import DataLoader
 from graph_mixer import PositionalEncodingTransform
 from graph_mixer.data_processing import GraphPartitionTransform
+#from torch_geometric.loader.cluster import ClusterData
 
 vector.register_awkward()
 
@@ -32,7 +33,7 @@ class JetQGDataset(torch.utils.data.Dataset):
     """
 
     def __init__(
-        self, config, train: bool, n_patche: int = 8
+        self, config, mode:str='train'
     ) -> torch.utils.data.Dataset:
         """_summary_
 
@@ -42,10 +43,11 @@ class JetQGDataset(torch.utils.data.Dataset):
         """
         # if the dataset doesn't exists:
         # zenodo_get RECORD_ID_OR_DOI
+        self.config = config
         self.input_path = config.path
         print("Input Path:", config.path)
         self.len = 0
-        if train:
+        if mode=='train':
             files = config.train_files
         else:
             files = config.test_files
@@ -227,9 +229,11 @@ class JetQGDataset(torch.utils.data.Dataset):
 
         event.edge_attr = edge_data.T
 
-        pre_transform = PositionalEncodingTransform(rw_dim=4, lap_dim=4)
+        pre_transform = PositionalEncodingTransform(rw_dim=self.config.rw_dim, 
+                                                    lap_dim=self.config.lap_dim)
         gpatrches = GraphPartitionTransform(
-            n_patches=8, metis=False, patch_rw_dim=4, num_hops=1
+            n_patches=self.config.n_patches, metis=False, 
+            patch_rw_dim=self.config.rw_dim, num_hops=0
         )
         event = gpatrches(event)
         event = pre_transform(event)
@@ -251,7 +255,7 @@ class JetQGDataset(torch.utils.data.Dataset):
             _type_: _description_
         """
 
-        return 10000  # self.len
+        return self.len
 
     def __getitem__(self, idx: int):  # ->tuple(torch.Tensor, torch.Tensor):
         """_summary_

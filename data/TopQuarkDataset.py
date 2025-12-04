@@ -25,8 +25,9 @@ label = "label"
 
 # graph partitioning: https://github.com/JosephDoUrden/Graph-Partitioning-Algorithms-Comparative-Study
 class JetTopTagDataset(torch.utils.data.Dataset):
-    def __init__(self, input_path, scale=True, mode="train", apply_norm=False):
-        self.input_path = input_path
+    def __init__(self, config, scale=True, mode="train", apply_norm=False):
+        
+        self.input_path = config.input_path
         self.mode = mode
         self.apply_norm = apply_norm
         if mode == "train":
@@ -34,7 +35,7 @@ class JetTopTagDataset(torch.utils.data.Dataset):
                 f"{self.input_path}/train_file.parquet",
             )
         elif mode == "test":
-            self.file = pd.read_parquet(f"{self.input_path}/test_file.parquet")
+            self.file = pd.read_parquet(f"{self.input_path}/val_file.parquet")
 
         self.label = self.file[label]
         if mode == "train":
@@ -57,7 +58,7 @@ class JetTopTagDataset(torch.utils.data.Dataset):
     def __len__(self):
         """ """
         if self.mode == "train":
-            return self.label.shape[0]
+            return 30000#self.label.shape[0]
         else:
             return self.label.shape[0]
 
@@ -70,7 +71,7 @@ class JetTopTagDataset(torch.utils.data.Dataset):
                 num_particle,
                 len(part_vars),
             )
-            .to(dtype=torch.float)
+            .to(dtype=torch.float64)
         )
         pos = (
             torch.Tensor(np.concatenate(self.pos.loc[idx].values))
@@ -78,9 +79,8 @@ class JetTopTagDataset(torch.utils.data.Dataset):
                 num_particle,
                 len(pos_var),
             )
-            .to(dtype=torch.float)
+            .to(dtype=torch.float64)
         )
-
         jet = torch.Tensor(self.jet_vars.loc[idx].values)
         j_features = torch.stack(
             [torch.full([num_particle], i) for i in jet],
@@ -89,20 +89,21 @@ class JetTopTagDataset(torch.utils.data.Dataset):
         # j_features[:, 3] = torch.log(j_features[3])
         dR = torch.sqrt(event[:, 4] ** 2 + event[:, 5] ** 2)
         pt = torch.sqrt(event[:, 0] ** 2 + event[:, 1] ** 2)
-        
+        #Add edge features:
         event = Data(
             x=torch.hstack(
                 [event, dR.view(-1, 1), pt.view(-1, 1), j_features],
-            ).view(num_particle, len(jet_vars)+len(part_vars) + 2),
-            pos=pos,
+            ).view(num_particle, len(jet_vars)+len(part_vars) + 2).to(dtype=torch.float32),
+            pos=pos.to(dtype=torch.float32),
             label=torch.Tensor([self.label[idx]])
         )
         # event.jet_features = jet.view(1, 6)
         # event.jet_features[:, 0] = torch.log(jet[0])
         # event.jet_features[:, 3] = torch.log(jet[3])
-        knn_graph = torch_geometric.transforms.knn_graph.KNNGraph(k=8, loop=True)
-        gpatrches = GraphPartitionTransform(n_patches=8, metis=False)
+        knn_graph = torch_geometric.transforms.knn_graph.KNNGraph(k=16, loop=True)
+        gpatrches = GraphPartitionTransform(n_patches=32, metis=False)
         # apply positional encoding
         event = knn_graph(event)
         event = gpatrches(event)
+        
         return event
