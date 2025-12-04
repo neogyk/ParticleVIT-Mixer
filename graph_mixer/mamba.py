@@ -1,5 +1,6 @@
 """
-This is code adaptation of the MambaBlock - https://github.com/myscience/mamba/tree/main
+This is code adaptation of the MambaBlock -
+https://github.com/myscience/mamba/tree/main
 Original Mamba Paper: https://arxiv.org/pdf/2312.00752
 """
 
