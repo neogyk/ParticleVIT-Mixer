@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse, sys 
+import pdb
 import importlib
 import torch
 import torchmetrics
@@ -48,18 +49,17 @@ class gMLPMixer(pl.LightningModule):
         self.model = GraphMLPMixer(**{k: v for k, v in asdict(mixer_config).items()})
         self.save_hyperparameters()
         self.model.apply(weight_init)
-        self.loss_fn = FocalLoss(gamma=0.0)
-        self.train_acc = torchmetrics.classification.BinaryAccuracy()
-        self.valid_acc = torchmetrics.classification.BinaryAccuracy()
-        self.train_auc = torchmetrics.classification.BinaryAUROC()
-        self.valid_auc = torchmetrics.classification.BinaryAUROC()
-        print(self.model)
-        # self.ema = ExponentialMovingAverage(self.model.parameters(), decay=0.995)
+        self.loss_fn = FocalLoss(gamma=2.0)
+        self.train_acc = torchmetrics.classification.Accuracy(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
+        self.valid_acc = torchmetrics.classification.Accuracy(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
+        self.train_auc = torchmetrics.classification.AUROC(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
+        self.valid_auc = torchmetrics.classification.AUROC(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
+        #self.ema = ExponentialMovingAverage(self.model.parameters(), decay=0.995)
         self.confmat = torchmetrics.ConfusionMatrix(
-            normalize="true", task="binary", num_classes=2
+            normalize="true", task="binary" if  mixer_config.nout==1 else "multiclass", num_classes=mixer_config.nout
         )
         self.val_confmat = torchmetrics.ConfusionMatrix(
-            normalize="true", task="binary", num_classes=2
+            normalize="true", task="binary" if  mixer_config.nout==1 else "multiclass",     num_classes=mixer_config.nout
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -85,6 +85,7 @@ class gMLPMixer(pl.LightningModule):
             _type_: _description_
         """
         x, y = batch, batch.label
+      
         logits = self.model(x)
         logits = torch.nan_to_num(logits, 1e-16)
         class_weights = [1.0,1.0,]  
@@ -95,12 +96,12 @@ class gMLPMixer(pl.LightningModule):
         l2_norm = 0
         i = 0
         _len = len(list(self.model.parameters()))
-        for param in self.model.parameters():
-            i += 1
-            l1_norm += self.config.alpha * (_len - i) * torch.norm(torch.abs(param), 1)
-            l2_norm += (
-                self.config.alpha * (_len - i) * torch.norm(torch.abs(param**2), 1)
-            )
+        # for param in self.model.parameters():
+        #     i += 1
+        #     l1_norm += self.config.alpha * (_len - i) * torch.norm(torch.abs(param), 1)
+        #     l2_norm += (
+        #         self.config.alpha * (_len - i) * torch.norm(torch.abs(param**2), 1)
+        #     )
         loss = self.loss_fn(
             logits, y.long(), weight=torch.Tensor(class_weights)
         ) + self.config.alpha * (l1_norm + l2_norm)
@@ -149,10 +150,11 @@ class gMLPMixer(pl.LightningModule):
         if self.config.optimizer == "lion":
             optimizer = Lion(self.model.parameters(), lr=4e-4, weight_decay=1e-2)
         elif self.config.optimizer == "adam":
-            optimizer = AdamAtan2(self.model.parameters(), lr=1e-6, weight_decay=1e-2)
+            optimizer = AdamAtan2(self.model.parameters(), lr=1e-3, weight_decay=1e-2)
         elif self.config.optimizer == "adamw":
             optimizer = torch.optim.AdamW(
-                self.model.parameters(), lr=1e-3, weight_decay=1e-5
+                self.model.parameters(),lr=1e-3, weight_decay=1e-2, betas=(0.89, 0.99)
+                #lr=1e-4, weight_decay=1e-2
             )
         elif self.config.optimizer == "adabelief":
             optimizer = AdaBelief(
@@ -163,28 +165,50 @@ class gMLPMixer(pl.LightningModule):
                 weight_decouple=True,
                 rectify=False,
             )
-        scheduler = {
-            "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode="min",
-                factor=0.9,
-                patience=100,
-                threshold=0.000001,
-                threshold_mode="rel",
-                cooldown=0,
-                min_lr=1e-8,
-                eps=1e-08,
-            ),
-            "monitor": "train/loss",
-            "interval": "step",
-            "frequency": 1,
-        }
+        #Select Optimizer
+        if config.scheduler == "ReduceOnPlateau":
+            scheduler = {
+                "scheduler": torch.optim.lr_scheduler.ReduceLROnPlateau(
+                    optimizer,
+                    mode="min",
+                    factor=0.9,
+                    patience=100,
+                    threshold=0.000001,
+                    threshold_mode="rel",
+                    cooldown=0,
+                    min_lr=1e-8,
+                    eps=1e-08,
+                ),
+                "monitor": "train/loss",
+                "interval": "step",
+                "frequency": 1,
+            }
+        elif config.scheduler == "cosine_warmup_annealing":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=100, T_mult=4, eta_min=1e-4, last_epoch=-1)
+        else:
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
+                                                max_lr=5e-3, 
+                                                total_steps=2000,
+                                                epochs=1, 
+                                                steps_per_epoch=None,
+                                                pct_start=0.3,
+                                                anneal_strategy='cos',
+                                                cycle_momentum=True,
+                                                base_momentum=0.9, 
+                                                max_momentum=0.99, 
+                                                div_factor=0.68, 
+                                                final_div_factor=10000.0,
+                                                three_phase=False, 
+                                                last_epoch=-1)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
 
 def train(config, graph_mixer, train_dl, test_dl):
     wandb_logger = WandbLogger(project=config.dataset)
     wandb_logger.watch(graph_mixer, log="all")  ##log_graph=True)
+    
+    
     trainer = pl.Trainer(
         default_root_dir=config.root_dir,
         max_epochs=200,
@@ -197,7 +221,7 @@ def train(config, graph_mixer, train_dl, test_dl):
         logger=wandb_logger,
         accelerator="cpu",
         detect_anomaly=True,
-        check_val_every_n_epoch=2,
+        check_val_every_n_epoch=1,
     )
     trainer.fit(graph_mixer, train_dl, test_dl)
     return trainer
@@ -240,7 +264,7 @@ def load_dataset(config):
 
 
 if __name__ == "__main__":
-    g = set_seed(42)
+    g = set_seed(3407)
     config, mixer_config, train_config = get_the_arguments()
     train_dl, test_dl = load_dataset(config=config)
     graph_mixer = gMLPMixer(mixer_config, config)
