@@ -48,7 +48,6 @@ def weight_init(m):
             torch.nn.init.constant_(m.bias, 0.1)
     elif isinstance(m, torch.nn.RMSNorm):
         torch.nn.init.constant_(m.weight, 1)
-        torch.nn.init.constant_(m.bias, 0.1)
     elif isinstance(m, torch.nn.BatchNorm1d):
         torch.nn.init.constant_(m.weight, 1)
         torch.nn.init.constant_(m.bias, 0.1)
