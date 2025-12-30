@@ -21,6 +21,17 @@ dependencies = [
     "torchmetrics (>=1.8.2,<2.0.0)",
     "pytorch-lightning (>=2.6.0,<3.0.0)",
     "mixture-of-experts (>=0.2.3,<0.3.0)",
+    "torch-scatter",
+    "torch-cluster",
+    "torch-sparse",
+    "torch-geometric",
+    "soft_moe",
+    "adam_atan2_pytorch",
+    "adabelief_pytorch",
+    "lightning",
+    "uproot",
+    "fastparquet",
+    "datasets"
 ]
 
 
@@ -30,3 +41,8 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.uv]
 package = false
+
+[tool.uv.extra-build-dependencies]
+torch-cluster = ["torch"]
+torch-scatter = ["torch"]
+torch-sparse = ["torch"]
