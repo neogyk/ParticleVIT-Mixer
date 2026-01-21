@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 class Config:
     dataset:str = "quark_gluon"
     root_dir = "./QG/"
-    path: str = '/Users/leonid/Desktop/misc/Datasets/QG/'
+    path: str = '/kaggle/input/quarkgluon'
     train_test_ratio:float = 0.3
     loss_weight:str = 'mean'
     hl_features:bool = False
@@ -17,13 +17,9 @@ class Config:
     n_patches:int = 16
     train_files = [
         'QG_jets_10.npz',
-        'QG_jets_14.npz',
-        'QG_jets_16.npz',
-        'QG_jets_12.npz',
-        'QG_jets_13.npz'
     ]
 
-    test_files = ['QG_jets.npz']
+    test_files = ['QG_jets_1.npz']
     lr:float = 1e-3
     alpha:float = 1e-6
     regularization:float = 1e-6
@@ -57,6 +53,4 @@ class TrainingConfig:
     gamma:int=0
     max_epoch:int=200
     seed:int=42
-    
-
     
