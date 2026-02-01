@@ -6,15 +6,12 @@ from glob import glob
 import pdb
 import awkward as ak
 import numpy as np
-import pandas as pd
 import torch
 import torch_geometric
 import vector
 from torch_geometric.data import Data
-from torch_geometric.loader.dataloader import DataLoader
 from graph_mixer import PositionalEncodingTransform
 from graph_mixer.data_processing import GraphPartitionTransform
-#from torch_geometric.loader.cluster import ClusterData
 
 vector.register_awkward()
 
@@ -61,11 +58,10 @@ class JetQGDataset(torch.utils.data.Dataset):
         self.len = sum([i.shape[0] for i in self.label])
         print(f"Init dataset with the shape {self.len}")
         # sorted_input_ids = sorted(zip(input_ids, train_targets), key=lambda x: len(x[0]))
-
         return
 
-    # @numba.jit(nopython=True)
-    def compute_obs(self, event):
+    #@njit(cache=True)
+    def compute_obs(self, event:np.array):
         # compute the jet "mass" as an angularity with exponent 2
         # it's easier for the network to predict the log of the observable, shifted and scaled
         # obs = torch.log10(event[:,0]*(event[:,1:3]**2).sum()/event[:,:,0].sum()).detach().numpy()
@@ -79,15 +75,11 @@ class JetQGDataset(torch.utils.data.Dataset):
             np.zeros_like(event[:, 0]),
         )
 
-        p4 = _p4_from_ptetaphim(pt, eta, phi, mass)
+        #p4 = _p4_from_ptetaphim(pt, eta, phi, mass)
+        p4 = vector.zip({"pt": pt, "eta": eta, "phi": phi, "mass": mass})
         px, py, pz, energy = p4.x, p4.y, p4.z, p4.energy
 
         jet_p4 = ak.sum(p4)
-
-        _jet_etasign = np.sign(eta)
-        _jet_etasign[_jet_etasign == 0] = 1
-        deta = (p4.eta - eta) * _jet_etasign
-        dphi = p4.deltaphi(jet_p4)
 
         part_log_pt = np.log(p4.pt)
         part_e_log = np.log(energy)
@@ -146,11 +138,9 @@ class JetQGDataset(torch.utils.data.Dataset):
             part_charge.to_numpy(),
         ]
 
-        # 15
+        # 13
         list_features = [
             pt,
-            eta,
-            phi,
             energy.to_numpy(),
             deta.to_numpy(),
             dphi.to_numpy(),
@@ -177,7 +167,7 @@ class JetQGDataset(torch.utils.data.Dataset):
         ]
         return list_features, jet_features, cat_features
 
-    # @numba.jit(nopython=True)
+    #@numba.jit(nopython=True)
     def arrays2event(self, list_features, jet_features, cat_features):
 
         res = torch.stack([torch.Tensor(i) for i in list_features])
@@ -189,9 +179,8 @@ class JetQGDataset(torch.utils.data.Dataset):
             [
                 torch.Tensor(i)
                 for i in [
-                    list_features[0],
-                    list_features[1],
                     list_features[2],
+                    list_features[3],
                 ]
             ]
         ).T
@@ -236,15 +225,16 @@ class JetQGDataset(torch.utils.data.Dataset):
             patch_rw_dim=self.config.rw_dim, num_hops=0
         )
         event = gpatrches(event)
-        event = pre_transform(event)
+        event = pre_transform(event) 
+        #event = self.transform(event)
         return event
 
     def preprocess(self, event):
-
-        event = torch.Tensor(event[(event[:, 0] != 0), :]).detach().numpy()
-        # yphi_avg = np.average(event[:,1:3], axis=0)
-        # event[:,1:3] -= torch.Tensor(yphi_avg)
-        # event[:,0] /= event[:,0].sum()
+        #TODO move to the numpy
+        event = torch.Tensor(event[(event[:, 0] != 0), :])
+        yphi_avg = event[:,1:3].mean(axis=0)
+        event[:,1:3] -= yphi_avg
+        event[:,0] /= event[:,0].sum()
 
         return event
 
@@ -275,7 +265,7 @@ class JetQGDataset(torch.utils.data.Dataset):
         label = self.label[i_file][i]
         event = self.data[i_file][i]
         event = self.preprocess(event)
-        list_features, jet_features, cat_features = self.compute_obs(event)
+        list_features, jet_features, cat_features = self.compute_obs(event.detach().cpu().numpy())
         event = self.arrays2event(list_features, jet_features, cat_features)
         label = torch.Tensor(np.array(label))
         event.label = label

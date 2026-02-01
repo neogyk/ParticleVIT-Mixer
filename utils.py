@@ -8,7 +8,7 @@ import warnings
 import numpy as np
 from torch.optim.lr_scheduler import _LRScheduler
 import torch_geometric
-
+import pdb
 
 def set_seed(seed):
     random.seed(seed)
@@ -39,9 +39,8 @@ def weight_init(m):
         if m.bias is not None:
             torch.nn.init.constant_(m.bias, 0.1)
     elif isinstance(m, torch_geometric.nn.CGConv):
-        torch.nn.init.xavier_normal_(m.lin.weight)
-        if m.lin.bias is not None:
-            torch.nn.init.constant_(m.bias, 0.1)
+        torch.nn.init.xavier_normal_(m.lin_f.weight)
+        torch.nn.init.xavier_normal(m.lin_s.weight)
     elif isinstance(m, torch.nn.Conv1d):
         torch.nn.init.xavier_normal_(m.weight)
         if m.bias is not None:

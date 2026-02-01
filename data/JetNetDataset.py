@@ -13,6 +13,28 @@ import random
 from graph_mixer import PositionalEncodingTransform
 from graph_mixer.data_processing import GraphPartitionTransform, RicciFlowPartition
 
+from torch_geometric.transforms import BaseTransform
+from torch_geometric.utils import coalesce, to_dense_adj
+
+class SimpleKHopRewire(BaseTransform):
+    def __init__(self, k=4):
+        self.k = k
+    
+    def forward(self, data):
+        with torch.no_grad():
+            edge_index = data.edge_index
+            adj = to_dense_adj(edge_index)[0]
+   
+            # Simple adjacency multiplication to find k-hop neighbors
+            # Note: This is for small/medium graphs. Use sparse ops for large ones.
+            for _ in range(self.k):
+                adj = torch.matmul(adj, adj)
+            
+            # Convert back to edge_index
+            new_edge_index = adj.nonzero().t().contiguous()
+            data.edge_index = coalesce(new_edge_index)
+        return data
+
 
 class JetNetDataset(torch.utils.data.Dataset):
 
@@ -34,7 +56,6 @@ class JetNetDataset(torch.utils.data.Dataset):
 
         labels = []
         jet_features = []  # [pt, theta, mass, number of particles]
-        # 4 is the number of particle features, in order: ['theta','phi, 'pt']
         particle_features = []
 
         label_map = {
@@ -44,7 +65,6 @@ class JetNetDataset(torch.utils.data.Dataset):
             "t": 3,
             "z": 4,
         }
-
         labels = []
         for file in glob(self.input_path + "*.hdf5"):
             label_size = torch.Tensor(
@@ -56,7 +76,7 @@ class JetNetDataset(torch.utils.data.Dataset):
             )
             label = file.split("/")[-1].strip(".hdf5")
             labels.append(torch.full_like(label_size, label_map[label]))
-
+        self.transform = SimpleKHopRewire()
         self.label = torch.concatenate(labels)
         self.label = self.label  # [idx]
         self.jet_features = np.concatenate(jet_features)  # [idx]
@@ -93,8 +113,6 @@ class JetNetDataset(torch.utils.data.Dataset):
         Returns:
             _type_: _description_
         """
-        # idx = self.sorted_input_ids[idx][0]
-        idx = random.randint(0, self.particle_features.shape[0] - 1)
         pos = self.particle_features[idx, :]
         pos = torch.Tensor(pos[(pos[:, 0] != 0), :])[:, :3]
         n_particle = pos.size()[0]
@@ -105,16 +123,14 @@ class JetNetDataset(torch.utils.data.Dataset):
         j_features = torch.stack(
             [torch.full([n_particle], i) for i in self.jet_features[idx][1:]]
         ).T
-        # j_features = torch.stack([jet_pt, j_features])
         dR = torch.sqrt((pos[:, 0]) ** 2 + (pos[:, 1]) ** 2).view(-1, 1)
-        # cos_eta = torch.cos(pos[:, 0])
         event = Data(
             pos=pos.view(pos.shape),
             label=self.label[idx],
         )
         event.x = torch.concatenate((event.pos, dR, jet_pt, j_features), dim=1)
         knn_graph = torch_geometric.transforms.knn_graph.KNNGraph(
-            k=8, loop=True, num_workers=12
+            k=10, loop=True, num_workers=4
         )
         event = knn_graph(event)
 
@@ -135,6 +151,7 @@ class JetNetDataset(torch.utils.data.Dataset):
         event.edge_attr = torch.stack([dR, k_T, z]).T
         pre_transform = PositionalEncodingTransform(rw_dim=self.config.rw_dim, lap_dim=self.config.lap_dim)
         gpatrches = GraphPartitionTransform(n_patches=self.config.n_patches, metis=False, patch_rw_dim=self.config.patch_rw_dim)
+        
         event = gpatrches(event)
         event = pre_transform(event)
         return event

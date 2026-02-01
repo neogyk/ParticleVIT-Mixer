@@ -31,7 +31,10 @@ dependencies = [
     "lightning",
     "uproot",
     "fastparquet",
-    "datasets"
+    "datasets",
+    "matplotlib",
+    "x-transformers"
+
 ]
 
 
