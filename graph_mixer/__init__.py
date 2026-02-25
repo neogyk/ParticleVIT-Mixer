@@ -244,15 +244,7 @@ class MLPMixer(nn.Module):
         )
         if self.with_final_norm:
             self.layer_norm = nn.RMSNorm(nhid, eps=1e-8)
-        self.moe = SoftMoELayerWrapper(
-            dim=nhid,
-            slots_per_expert=4,
-            num_experts=8,
-            layer=FeedForward,
-            in_dim=nhid,
-            hidden_dim=nhid,
-            out_dim=nhid,
-        )
+        
 
     def forward(self, x):
         # cache = (None, torch.zeros(nhid, 32, 2 - 1))
@@ -262,7 +254,6 @@ class MLPMixer(nn.Module):
             prev = x
             x += prev
 
-        x = self.moe(x) + x
         if self.with_final_norm:
             x = self.layer_norm(x)
         return x
@@ -359,7 +350,7 @@ class GraphMLPMixer(nn.Module):
         if self.patch_rw_dim > 0:
             self.patch_rw_encoder = MLP(self.patch_rw_dim, nhid, 1)
         self.concat_ops = concat_ops
-        self.type = "mixer"
+        self.type = "hrm"
         self.input_encoder = LinearEncoder(nfeat_node, nhid, grad=True)
         self.edge_encoder = LinearEncoder(nfeat_edge, nhid, grad=True)
         # encoder_layer = nn.TransformerEncoderLayer(d_model=nhid, activation=torch.nn.functional.gelu, nhead=8)
@@ -367,6 +358,16 @@ class GraphMLPMixer(nn.Module):
         ################################################################################################
         #                       Encoder Modules:
         ################################################################################################
+        if self.type=='hrm':nhid=64
+        self.moe = SoftMoELayerWrapper(
+            dim=nhid,
+            slots_per_expert=4,
+            num_experts=8,
+            layer=FeedForward,
+            in_dim=nhid,
+            hidden_dim=nhid,
+            out_dim=nhid,
+        )
         self.gnns = nn.ModuleList(
             [
                 GNN(
@@ -505,6 +506,9 @@ class GraphMLPMixer(nn.Module):
         # Encoder
         # mixer_x = self.transformer_encoder(mixer_x)
         mixer_x = self.encoder(mixer_x)
+
+        mixer_x = self.moe(mixer_x)
+        
         # Global Average Pooling
         x = (mixer_x * data.mask.unsqueeze(-1)).sum(1) / data.mask.sum(1, keepdim=True)
         # Readout
