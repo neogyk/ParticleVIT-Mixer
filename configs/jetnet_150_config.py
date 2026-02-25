@@ -3,9 +3,9 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Config:
-    dataset:str = "jetnet"
+    dataset:str = "jetnet150"
     root_dir = "./JetNet/"
-    path: str = '/Users/leonid/Desktop/misc/Datasets/JetNet/'
+    path: str = '/teamspace/studios/this_studio/jetnet/'
     moe:bool = True  # False
     rw_dim:int=4
     lap_dim:int=4
@@ -13,7 +13,7 @@ class Config:
     lr:float = 1e-4
     alpha:float = 1e-6
     regularization:float = 1e-6
-    batch_size:int = 256
+    batch_size:int = 512#256
     optimizer = "adamw"
     train_test_ratio = 0.3
     n_epoch = 100
@@ -21,17 +21,17 @@ class Config:
     resume_training = False  # True
     do_test = True
     save_model = True
-    seed = 3407
+    seed = 0
     loss_weight = 'mean'
     patch_rw_dim:int=4
     n_patches:int=16
     rw_dim:int=4
     lap_dim:int=4
+    scheduler = "cosine_warmup_annealing"
 
     
 @dataclass
 class MixerConfig:
-    
     nfeat_node:int=8
     nfeat_edge:int=3
     dropout:float=0.0
@@ -40,7 +40,7 @@ class MixerConfig:
     nhid:int=64
     nlayer_gnn:int=0
     n_patches:int=16
-    nout:int=2
+    nout:int=5
     rw_dim:int=4
     lap_dim:int=4
     nlayer_mlpmixer:int=8
@@ -49,10 +49,10 @@ class MixerConfig:
     
 @dataclass
 class TrainingConfig:
-    loss:str
-    gamma:int
-    max_epoch:200
-    seed:0
+    loss:str='focal_loss'
+    gamma:int=0
+    max_epoch=200
+    seed=0
     
 
     

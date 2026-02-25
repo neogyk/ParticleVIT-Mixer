@@ -30,7 +30,7 @@ class Config:
     save_model = True
     seed = 3407
     loss_weight = 'mean'
-    scheduler = "ReduceOnPlateau"
+    scheduler = "cosine_warmup_annealing"
     
 @dataclass
 class MixerConfig:
