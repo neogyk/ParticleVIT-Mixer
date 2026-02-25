@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, sys 
+import argparse, sys
 import pdb
 import importlib
 import torch
@@ -26,7 +26,6 @@ from data import (
 import torch
 import torchvision.models as models
 from torch.profiler import profile, ProfilerActivity, record_function
-from torchao.quantization.prototype.qat import Int8DynActInt4WeightQATQuantizer
 
 
 def get_the_arguments():
@@ -38,12 +37,12 @@ def get_the_arguments():
     parser.add_argument("config")
     args = parser.parse_args()
     config_path = args.config
-    
+
     config_spec = importlib.util.spec_from_file_location("Config", config_path)
     config = importlib.util.module_from_spec(config_spec)
     sys.modules["Config"] = config
     config_spec.loader.exec_module(config)
-    #Return 3 config one is about to the data, second for Neural Network parameter and third for Training Process
+    # Return 3 config one is about to the data, second for Neural Network parameter and third for Training Process
     return config.Config(), config.MixerConfig(), config.TrainingConfig()
 
 
@@ -56,19 +55,35 @@ class gMLPMixer(pl.LightningModule):
         self.save_hyperparameters()
         self.model.apply(weight_init)
         self.loss_fn = FocalLoss(gamma=2.0)
-        self.train_acc = torchmetrics.classification.Accuracy(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
-        self.valid_acc = torchmetrics.classification.Accuracy(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
-        self.train_auc = torchmetrics.classification.AUROC(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
-        self.valid_auc = torchmetrics.classification.AUROC(num_classes=mixer_config.nout, task="binary" if  mixer_config.nout==2 else "multiclass")
-        #self.ema = ExponentialMovingAverage(self.model.parameters(), decay=0.995)
+        self.train_acc = torchmetrics.classification.Accuracy(
+            num_classes=mixer_config.nout,
+            task="binary" if mixer_config.nout == 2 else "multiclass",
+        )
+        self.valid_acc = torchmetrics.classification.Accuracy(
+            num_classes=mixer_config.nout,
+            task="binary" if mixer_config.nout == 2 else "multiclass",
+        )
+        self.train_auc = torchmetrics.classification.AUROC(
+            num_classes=mixer_config.nout,
+            task="binary" if mixer_config.nout == 2 else "multiclass",
+        )
+        self.valid_auc = torchmetrics.classification.AUROC(
+            num_classes=mixer_config.nout,
+            task="binary" if mixer_config.nout == 2 else "multiclass",
+        )
+        # self.ema = ExponentialMovingAverage(self.model.parameters(), decay=0.995)
         self.confmat = torchmetrics.ConfusionMatrix(
-            normalize="true", task="binary" if  mixer_config.nout==1 else "multiclass", num_classes=mixer_config.nout
+            normalize="true",
+            task="binary" if mixer_config.nout == 1 else "multiclass",
+            num_classes=mixer_config.nout,
         )
         self.val_confmat = torchmetrics.ConfusionMatrix(
-            normalize="true", task="binary" if  mixer_config.nout==1 else "multiclass",     num_classes=mixer_config.nout
+            normalize="true",
+            task="binary" if mixer_config.nout == 1 else "multiclass",
+            num_classes=mixer_config.nout,
         )
-        self.qat_quantizer = Int8DynActInt4WeightQATQuantizer()
-        self.model = self.qat_quantizer.prepare(self.model)
+        # self.qat_quantizer = Int8DynActInt4WeightQATQuantizer()
+        # self.model = self.qat_quantizer.prepare(self.model)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """_summary_
@@ -93,24 +108,34 @@ class gMLPMixer(pl.LightningModule):
             _type_: _description_
         """
         x, y = batch, batch.label
-      
+
         logits = self.model(x)
         logits = torch.nan_to_num(logits, 1e-16)
-        class_weights =  batch.label.size(0)/(torch.histc(batch.label,  bins=self.mixer_config.nout))
+        class_weights = batch.label.size(0) / (
+            torch.histc(batch.label, bins=self.mixer_config.nout)
+        )
         output = torch.nn.functional.softmax(logits, dim=1)
         noise_std = 1e-4
-        l1_norm = torch.Tensor([torch.norm(torch.abs(param), 1) for param in self.model.parameters()])
-        l2_norm = torch.pow(l1_norm,2)
-        loss = self.loss_fn(logits, y.long(), weight=torch.Tensor(class_weights)) 
-        
+        # l1_norm = torch.Tensor([torch.norm(torch.abs(param), 1) for param in self.model.parameters()])
+        # l2_norm = torch.pow(l1_norm,2)
+        loss = self.loss_fn(logits, y.long(), weight=torch.Tensor(class_weights))
+
         loss += torch.rand_like(loss) * noise_std
-        if torch.isnan(loss.mean()):pdb.set_trace()
+        if torch.isnan(loss.mean()):
+            pdb.set_trace()
         sch = self.lr_schedulers()
         loss = torch.nan_to_num(loss, 1e-16)
-        loss = loss.mean() + self.config.alpha *(torch.sum(l1_norm) + torch.sum(l2_norm))
-        if batch_idx%10000:
+        loss = (
+            loss.mean()
+        )  # + self.config.alpha *(torch.sum(l1_norm) + torch.sum(l2_norm))
+        if batch_idx % 10000:
             auc = self.train_auc(output, y.to(dtype=torch.int))
-            self.log("train/loss", loss.detach(), prog_bar=True, batch_size=self.config.batch_size)
+            self.log(
+                "train/loss",
+                loss.detach(),
+                prog_bar=True,
+                batch_size=self.config.batch_size,
+            )
             acc = self.train_acc(output, y)
             self.log("train/acc", acc, prog_bar=True, batch_size=self.config.batch_size)
             conf_matrix = self.confmat.update(output.argmax(dim=1), y)
@@ -126,15 +151,20 @@ class gMLPMixer(pl.LightningModule):
         x, y = batch, batch.label
         logits = self.model(x)
         output = torch.nn.functional.softmax(logits, dim=1)
-        class_weights = torch.histc(batch.label, bins=self.mixer_config.nout) / batch.label.size(0)
+        class_weights = torch.histc(
+            batch.label, bins=self.mixer_config.nout
+        ) / batch.label.size(0)
+        # pdb.set_trace()
         loss = self.loss_fn(logits, y.long(), weight=torch.Tensor(class_weights)).mean()
-        if batch_idx%10000:
+        if batch_idx % 10000:
             auc = self.valid_auc(output, y.to(dtype=torch.int))
-            
+
             valid_acc = self.valid_acc(output, y)
             self.log("val/auc", auc, prog_bar=True, batch_size=self.config.batch_size)
             self.log("val/loss", loss, prog_bar=True, batch_size=self.config.batch_size)
-            self.log("valid/acc", valid_acc, prog_bar=True, batch_size=self.config.batch_size)
+            self.log(
+                "valid/acc", valid_acc, prog_bar=True, batch_size=self.config.batch_size
+            )
             conf_matrix = self.val_confmat.update(output.argmax(dim=1), y)
             fig_, ax_ = self.val_confmat.plot()
             plt.close()
@@ -145,7 +175,7 @@ class gMLPMixer(pl.LightningModule):
         optimizer = optimizer.optimizer
         optimizer.step(closure=optimizer_closure)
         optimizer.zero_grad()
-        
+
     def configure_optimizers(self):
         """_summary_
 
@@ -158,8 +188,11 @@ class gMLPMixer(pl.LightningModule):
             optimizer = AdamAtan2(self.model.parameters(), lr=1e-3, weight_decay=1e-2)
         elif self.config.optimizer == "adamw":
             optimizer = torch.optim.AdamW(
-                self.model.parameters(),lr=1e-3, weight_decay=1e-5, betas=(0.89, 0.99)
-                #lr=1e-4, weight_decay=1e-2
+                self.model.parameters(),
+                lr=1e-3,
+                weight_decay=1e-5,
+                betas=(0.89, 0.99),
+                # lr=1e-4, weight_decay=1e-2
             )
         elif self.config.optimizer == "adabelief":
             optimizer = AdaBelief(
@@ -170,7 +203,7 @@ class gMLPMixer(pl.LightningModule):
                 weight_decouple=True,
                 rectify=False,
             )
-        #Select Optimizer
+        # Select Optimizer
         print("Scheduler:", config.scheduler)
         if config.scheduler == "ReduceOnPlateau":
             scheduler = {
@@ -191,35 +224,37 @@ class gMLPMixer(pl.LightningModule):
             }
         elif config.scheduler == "cosine_warmup_annealing":
             scheduler = {
-                "scheduler":  torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=1, T_mult=4, eta_min=1e-6, last_epoch=-1),
+                "scheduler": torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                    optimizer, T_0=1, T_mult=8, eta_min=1e-8, last_epoch=-1
+                ),
                 "monitor": "train/loss",
                 "interval": "step",
                 "frequency": 1,
             }
         else:
-            scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-                                                max_lr=5e-3, 
-                                                total_steps=2000,
-                                                epochs=1, 
-                                                steps_per_epoch=200,
-                                                pct_start=0.3,
-                                                anneal_strategy='cos',
-                                                cycle_momentum=True,
-                                                base_momentum=0.9, 
-                                                max_momentum=0.99, 
-                                                div_factor=0.68, 
-                                                final_div_factor=10000.0,
-                                                three_phase=True, 
-                                                last_epoch=-1)
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=5e-3,
+                total_steps=2000,
+                epochs=1,
+                steps_per_epoch=200,
+                pct_start=0.3,
+                anneal_strategy="cos",
+                cycle_momentum=True,
+                base_momentum=0.9,
+                max_momentum=0.99,
+                div_factor=0.68,
+                final_div_factor=10000.0,
+                three_phase=True,
+                last_epoch=-1,
+            )
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
 
 def train(config, graph_mixer, train_dl, test_dl):
     wandb_logger = WandbLogger(project=config.dataset)
     wandb_logger.watch(graph_mixer, log="all")  ##log_graph=True)
-    
-    
+
     trainer = pl.Trainer(
         default_root_dir=config.root_dir,
         max_epochs=200,
@@ -231,11 +266,12 @@ def train(config, graph_mixer, train_dl, test_dl):
         gradient_clip_algorithm="norm",
         logger=wandb_logger,
         accelerator="cpu",
-        detect_anomaly=True,
-        check_val_every_n_epoch=1
-
+        detect_anomaly=False,
+        check_val_every_n_epoch=3,
     )
-    trainer.fit(graph_mixer, train_dl, test_dl)# ckpt_path="./quark_gluon/v7ucneiw/checkpoints/epoch=4-step=3910.ckpt")
+    trainer.fit(
+        graph_mixer, train_dl, test_dl
+    )  # ckpt_path="./quark_gluon/v7ucneiw/checkpoints/epoch=4-step=3910.ckpt")
     return trainer
 
 
@@ -249,9 +285,14 @@ def load_dataset(config):
     elif config.dataset == "w_boson":
         train_ds = WTagDataset.WTagDataset(config=config)
         test_ds = WTagDataset.WTagDataset(config=config, mode="test")
-    elif config.dataset == "jetnet":
-        train_ds = JetNetDataset.JetNetDataset(config=config)
-        test_ds = JetNetDataset.JetNetDataset(config=config, mode="test")
+    elif "jetnet" in config.dataset:
+        _train_ds = JetNetDataset.JetNetDataset(config=config)
+        evens = list(range(0, len(_train_ds), 2))
+        odds = list(range(1, len(_train_ds), 2))
+        train_ds = torch.utils.data.Subset(
+            _train_ds, evens + odds[: int(len(odds) / 2)]
+        )
+        test_ds = torch.utils.data.Subset(_train_ds, odds[int(len(odds) / 2) :])
     elif config.dataset == "jetclass":
         train_ds = JetClassDataset.JetClassDataset(config=config)
         test_ds = JetClassDataset.JetClassDataset(config=config, mode="test")
@@ -270,8 +311,7 @@ def load_dataset(config):
         batch_size=config.batch_size,
         shuffle=False,
         pin_memory=True,
-        num_workers=8
-        ,
+        num_workers=8,
         generator=g,
         worker_init_fn=seed_worker,
     )
@@ -279,14 +319,14 @@ def load_dataset(config):
 
 
 if __name__ == "__main__":
-    g = set_seed(3407)
     config, mixer_config, train_config = get_the_arguments()
+    g = set_seed(config.seed)
     train_dl, test_dl = load_dataset(config=config)
     graph_mixer = gMLPMixer(mixer_config, config)
-    #torch.serialization.safe_globals([mixer_config, config])
-    #graph_mixer = gMLPMixer.load_from_checkpoint("./quark_gluon/ghe2tz9a/checkpoints/epoch=0-step=782.ckpt", weights_only=False)
+    # torch.serialization.safe_globals([mixer_config, config])
+    # graph_mixer = gMLPMixer.load_from_checkpoint("./quark_gluon/ghe2tz9a/checkpoints/epoch=0-step=782.ckpt", weights_only=False)
 
-    #if argparse.train:
+    # if argparse.train:
     trainer = train(config, graph_mixer, train_dl, test_dl)
-    #elif argparse.validate:
+    # elif argparse.validate:
     #    trainer = train(config, graph_mixer, train_dl, test_dl)
